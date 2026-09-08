@@ -1,0 +1,72 @@
+# Render Blueprint. See: https://render.com/docs/blueprint-spec
+#
+# Deploys AnimeDB Bot as a Background Worker running long polling — the
+# simplest, most robust option for a single-instance bot: no public URL,
+# no TLS/webhook-secret management, no missed-update risk during
+# redeploys. This is the recommended default; see README section 18 for
+# how to switch to webhook mode (`type: web` + WEBHOOK_URL) instead.
+#
+# `preDeployCommand` runs `alembic upgrade head` after each build but
+# before the new instance starts serving — migrations are applied
+# automatically on every deploy.
+
+databases:
+  - name: animedb-postgres
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  - type: worker
+    name: animedb-bot
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    preDeployCommand: python -m alembic upgrade head
+    envVars:
+      - key: BOT_TOKEN
+        sync: false # set manually in the Render dashboard — never commit this
+      - key: ADMIN_IDS
+        sync: false # comma-separated Telegram user IDs
+      - key: DATABASE_URL
+        fromDatabase:
+          name: animedb-postgres
+          property: connectionString
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PORT
+        value: "8080"
+      - key: ANILIST_API_URL
+        value: https://graphql.anilist.co
+      - key: ANILIST_RATE_LIMIT_PER_MINUTE
+        value: "25"
+      - key: JIKAN_BASE_URL
+        value: https://api.jikan.moe/v4
+      - key: JIKAN_RATE_LIMIT_PER_MINUTE
+        value: "30"
+      - key: KITSU_BASE_URL
+        value: https://kitsu.io/api/edge
+      - key: KITSU_RATE_LIMIT_PER_MINUTE
+        value: "10"
+      - key: BACKGROUND_SYNC_ENABLED
+        value: "true"
+      - key: BACKGROUND_SYNC_INTERVAL_SECONDS
+        value: "3600"
+      - key: BACKGROUND_SYNC_BATCH_SIZE
+        value: "20"
+      # WEBHOOK_URL / WEBHOOK_SECRET intentionally omitted — leaving them
+      # unset keeps the bot in polling mode. See README section 18 to
+      # switch this service to `type: web` and set them instead.
+
+# --- Switching to webhook mode ---
+# 1. Change `type: worker` to `type: web` above.
+# 2. Add `healthCheckPath: /health`.
+# 3. Add these envVars:
+#      - key: WEBHOOK_URL
+#        value: https://animedb-bot.onrender.com/webhook/<some-random-path>
+#      - key: WEBHOOK_SECRET
+#        generateValue: true
+#    (Render fills in the real hostname after first deploy — update
+#    WEBHOOK_URL to match, then redeploy once more.)

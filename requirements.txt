@@ -1,0 +1,20 @@
+# --- Telegram bot framework (pulls in a compatible aiohttp automatically —
+# used both for Telegram API calls and the health endpoint) ---
+aiogram==3.15.0
+
+# --- Configuration (pydantic version constrained by aiogram's dependency) ---
+pydantic==2.9.2
+pydantic-settings==2.6.1
+
+# --- HTTP client (used from Phase 3 onward for AniList/Jikan/Kitsu/SIMKL) ---
+httpx==0.28.1
+
+# --- Database (used from Phase 2 onward) ---
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# --- Testing ---
+pytest==8.3.4
+pytest-asyncio==0.25.0
+aiosqlite==0.20.0
