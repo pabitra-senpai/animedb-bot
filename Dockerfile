@@ -24,4 +24,10 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
-CMD ["python", "-m", "app.main"]
+# Render's Docker runtime does not support overriding the container
+# command via `startCommand` in render.yaml (Docker-runtime services must
+# define their command here). Migrations are run as part of this CMD,
+# before the bot starts, so they still apply on every deploy —
+# including on Render's free tier, where `preDeployCommand` isn't
+# available.
+CMD ["sh", "-c", "python -m alembic upgrade head && python -m app.main"]
