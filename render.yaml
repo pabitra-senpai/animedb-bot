@@ -15,9 +15,10 @@
 # next request — Telegram's webhook delivery will wake it, just with a
 # few seconds of extra latency on the first message after idle time.
 #
-# `preDeployCommand` runs `alembic upgrade head` after each build but
-# before the new instance starts serving — migrations are applied
-# automatically on every deploy.
+# NOTE: `preDeployCommand` is a paid-plan-only feature on Render — it is
+# not supported on free-tier services. Migrations are instead run via
+# `startCommand` below (`alembic upgrade head` before `app.main` starts),
+# so they still apply automatically on every deploy, free tier included.
 
 databases:
   - name: animedb-postgres
@@ -32,7 +33,7 @@ services:
     region: oregon
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
-    preDeployCommand: python -m alembic upgrade head
+    startCommand: python -m alembic upgrade head && python -m app.main
     envVars:
       - key: BOT_TOKEN
         sync: false # set manually in the Render dashboard — never commit this
@@ -92,3 +93,6 @@ services:
 #    instance type exists for workers.
 # 4. Remove the WEBHOOK_URL and WEBHOOK_SECRET envVars entirely — leaving
 #    WEBHOOK_URL unset is what puts the bot back into polling mode.
+# 5. `startCommand` can revert to plain `python -m app.main` and
+#    migrations moved back to `preDeployCommand`, since paid plans
+#    support it — either approach works on a paid plan.
