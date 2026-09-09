@@ -1,10 +1,19 @@
 # Render Blueprint. See: https://render.com/docs/blueprint-spec
 #
-# Deploys AnimeDB Bot as a Background Worker running long polling — the
-# simplest, most robust option for a single-instance bot: no public URL,
-# no TLS/webhook-secret management, no missed-update risk during
-# redeploys. This is the recommended default; see README section 18 for
-# how to switch to webhook mode (`type: web` + WEBHOOK_URL) instead.
+# Deploys AnimeDB Bot as a Web Service running in webhook mode.
+#
+# NOTE (as of 2026): Render removed the free instance type for
+# Background Workers — free instances are only available for Web
+# Services, Postgres, and their Redis-compatible cache now. A polling
+# Background Worker (the simpler mode — see README section 13) needs at
+# least the paid Starter plan. This Blueprint defaults to Web Service +
+# webhook mode specifically so it works on the free plan; switch to a
+# `type: worker` + polling setup instead if you're on a paid plan and
+# prefer the simplicity (see the commented block at the bottom).
+#
+# Free-tier web services sleep after inactivity and cold-start on the
+# next request — Telegram's webhook delivery will wake it, just with a
+# few seconds of extra latency on the first message after idle time.
 #
 # `preDeployCommand` runs `alembic upgrade head` after each build but
 # before the new instance starts serving — migrations are applied
@@ -16,12 +25,13 @@ databases:
     postgresMajorVersion: "16"
 
 services:
-  - type: worker
+  - type: web
     name: animedb-bot
     runtime: docker
     plan: free
     region: oregon
     dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
     preDeployCommand: python -m alembic upgrade head
     envVars:
       - key: BOT_TOKEN
@@ -38,6 +48,10 @@ services:
         value: INFO
       - key: PORT
         value: "8080"
+      - key: WEBHOOK_URL
+        sync: false # set AFTER first deploy — see step below
+      - key: WEBHOOK_SECRET
+        generateValue: true
       - key: ANILIST_API_URL
         value: https://graphql.anilist.co
       - key: ANILIST_RATE_LIMIT_PER_MINUTE
@@ -56,17 +70,25 @@ services:
         value: "3600"
       - key: BACKGROUND_SYNC_BATCH_SIZE
         value: "20"
-      # WEBHOOK_URL / WEBHOOK_SECRET intentionally omitted — leaving them
-      # unset keeps the bot in polling mode. See README section 18 to
-      # switch this service to `type: web` and set them instead.
 
-# --- Switching to webhook mode ---
-# 1. Change `type: worker` to `type: web` above.
-# 2. Add `healthCheckPath: /health`.
-# 3. Add these envVars:
-#      - key: WEBHOOK_URL
-#        value: https://animedb-bot.onrender.com/webhook/<some-random-path>
-#      - key: WEBHOOK_SECRET
-#        generateValue: true
-#    (Render fills in the real hostname after first deploy — update
-#    WEBHOOK_URL to match, then redeploy once more.)
+# --- Setting WEBHOOK_URL (one-time, after first deploy) ---
+# 1. Deploy once with WEBHOOK_URL left blank — the service starts in
+#    polling mode as a harmless fallback for this first deploy. Note a
+#    free Web Service with no inbound HTTP traffic will still go idle
+#    between Render's own health checks; that resolves itself once step
+#    4 below is done and Telegram starts pushing webhook requests in.
+# 2. Render assigns a public URL like https://animedb-bot.onrender.com —
+#    copy the exact one from the service's dashboard page (it may differ
+#    if that name was already taken).
+# 3. Set WEBHOOK_URL to that URL + any path, e.g.
+#    https://animedb-bot.onrender.com/webhook/tg
+# 4. Save — Render redeploys, and app/main.py registers the webhook with
+#    Telegram automatically on startup (bot.set_webhook(...)).
+
+# --- Switching to a polling Background Worker instead (paid plan only) ---
+# 1. Change `type: web` to `type: worker` above.
+# 2. Remove `healthCheckPath` (not used by workers).
+# 3. Change `plan: free` to `plan: starter` (or higher) — no free
+#    instance type exists for workers.
+# 4. Remove the WEBHOOK_URL and WEBHOOK_SECRET envVars entirely — leaving
+#    WEBHOOK_URL unset is what puts the bot back into polling mode.
