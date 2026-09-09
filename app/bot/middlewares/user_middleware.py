@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject, User as TelegramUser
+from aiogram.types import CallbackQuery, Message, TelegramObject, Update, User as TelegramUser
 
 from app.config import get_settings
 from app.db.repositories.user_repository import get_or_create_user
@@ -40,8 +40,14 @@ class EnsureUserMiddleware(BaseMiddleware):
 
 
 def _extract_from_user(event: TelegramObject) -> TelegramUser | None:
+    # Registered via dp.update.outer_middleware(), so `event` here is the
+    # raw Update — unwrap it to the inner Message/CallbackQuery first.
+    if isinstance(event, Update):
+        event = event.message or event.edited_message or event.callback_query
+
     if isinstance(event, Message):
         return event.from_user
     if isinstance(event, CallbackQuery):
         return event.from_user
     return None
+    
