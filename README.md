@@ -270,8 +270,8 @@ Deploy via the included `render.yaml` Blueprint (Render → New →
 Blueprint → point at this repo). It provisions:
 
 - A free-tier managed PostgreSQL database
-- A **Background Worker** running this bot in long-polling mode (the
-  recommended default — see section 13)
+- A **Web Service** running this bot in **webhook mode** (see section
+  13 for why this — not a polling Background Worker — is the default)
 - `preDeployCommand: python -m alembic upgrade head` — migrations run
   automatically on every deploy, before the new instance starts serving
 - `DATABASE_URL` wired to the managed database automatically
@@ -279,49 +279,61 @@ Blueprint → point at this repo). It provisions:
   `postgres://` URL, and `Settings` rewrites it to the
   `postgresql+asyncpg://` scheme SQLAlchemy's async engine needs, so no
   manual edit is required)
+- `healthCheckPath: /health` for zero-downtime deploys
 
-You still need to set two secrets manually in the Render dashboard
-after the first deploy (they're marked `sync: false` in `render.yaml`
-so they're never committed): `BOT_TOKEN` and `ADMIN_IDS`.
+After the Blueprint's first deploy, three things need setting manually
+in the Render dashboard (marked `sync: false` / `generateValue: true`
+in `render.yaml` so nothing sensitive is committed):
 
-No UptimeRobot or artificial keep-alive traffic is used or required —
-a Background Worker has no inbound HTTP traffic to keep alive in the
-first place.
+1. `BOT_TOKEN`
+2. `ADMIN_IDS`
+3. `WEBHOOK_URL` — Render only assigns your service's public URL
+   *after* the first deploy, so this is necessarily a two-step process;
+   see the comment block at the bottom of `render.yaml` for the exact
+   steps. `WEBHOOK_SECRET` is generated automatically.
+
+No UptimeRobot or artificial keep-alive traffic is used or required.
 
 ## 13. Polling vs webhook decision
 
-**Long polling is the default and recommended mode**, deployed as a
-Render Background Worker. Reasoning:
+**Webhook mode, deployed as a Render Web Service, is the default here
+— specifically because Render removed the free instance type for
+Background Workers in 2026.** Free instances are only available for
+Web Services, Postgres, and Render's Redis-compatible cache now; a
+polling Background Worker needs at least the paid Starter plan. If
+you're on a paid plan already, long polling is simpler (see below) and
+`render.yaml` includes a commented block showing exactly what to change
+to switch to it.
 
+Trade-offs of each, for reference:
+
+**Long polling** (Background Worker, paid-plan-only on Render as of
+this writing):
 - No public URL, TLS certificate, or webhook secret to manage
 - No risk of Telegram retrying/dropping updates against a URL that's
   briefly down mid-deploy — the bot just resumes polling where it left
   off (`drop_pending_updates=True` only clears the *backlog*, not
   updates during a normal restart)
-- Fewer moving parts for a single-instance bot; the latency difference
-  versus webhooks is not meaningful at this scale
+- Fewer moving parts for a single-instance bot
 
-Webhook mode is fully implemented and available if you'd rather run
-this as a Render **Web Service** instead (e.g. to avoid a worker's cold
-starts on the free tier, or because you're fronting multiple bots
-behind one HTTPS endpoint):
+**Webhook** (Web Service, free-tier compatible):
+- Free to run on Render as of this writing
+- A free instance sleeps after inactivity and cold-starts on the next
+  request — Telegram's webhook push wakes it, with a few seconds of
+  extra latency on the first message after idle time
+- Lower latency than polling once warm, and no continuous outbound
+  long-poll connection to maintain
 
-1. Set `WEBHOOK_URL` to your service's public HTTPS URL + a path of
-   your choosing (e.g. `https://your-app.onrender.com/webhook/<random>`)
-   and `WEBHOOK_SECRET` to a random string.
-2. `Settings.use_webhook` becomes `True` automatically whenever
-   `WEBHOOK_URL` is set — `app/main.py` branches on this at startup:
-   it registers the webhook with Telegram (`bot.set_webhook`, passing
-   `secret_token=WEBHOOK_SECRET`) and mounts aiogram's
-   `SimpleRequestHandler` on the same aiohttp app that already serves
-   `/health`, instead of starting the polling loop.
-3. Telegram echoes `WEBHOOK_SECRET` back in the
-   `X-Telegram-Bot-Api-Secret-Token` header on every request; aiogram
-   verifies it automatically and rejects anything else — so the path
-   itself doesn't need to be secret, but keep it unguessable anyway.
-4. In `render.yaml`, change the service `type` from `worker` to `web`
-   and add `healthCheckPath: /health` (see the comment block at the
-   bottom of `render.yaml` for the exact envVar additions).
+How webhook mode works in this codebase: `Settings.use_webhook` becomes
+`True` automatically whenever `WEBHOOK_URL` is set —
+`app/main.py` branches on this at startup: it registers the webhook
+with Telegram (`bot.set_webhook`, passing `secret_token=WEBHOOK_SECRET`)
+and mounts aiogram's `SimpleRequestHandler` on the same aiohttp app
+that already serves `/health`, instead of starting the polling loop.
+Telegram echoes `WEBHOOK_SECRET` back in the
+`X-Telegram-Bot-Api-Secret-Token` header on every request; aiogram
+verifies it automatically and rejects anything else — so the path
+itself doesn't need to be secret, but keep it unguessable anyway.
 
 ## 14. Health endpoint
 
