@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject, Update
 
 BANNED_MESSAGE = "🚫 You've been banned from using this bot."
 
@@ -24,10 +24,18 @@ class BanCheckMiddleware(BaseMiddleware):
         user = data.get("user")
 
         if user is not None and user.is_banned:
-            if isinstance(event, Message):
-                await event.answer(BANNED_MESSAGE)
-            elif isinstance(event, CallbackQuery):
-                await event.answer(BANNED_MESSAGE, show_alert=True)
+            # Registered via dp.update.outer_middleware(), so `event` here
+            # is the raw Update — unwrap it to reply on the inner
+            # Message/CallbackQuery instead.
+            inner = event
+            if isinstance(inner, Update):
+                inner = inner.message or inner.edited_message or inner.callback_query
+
+            if isinstance(inner, Message):
+                await inner.answer(BANNED_MESSAGE)
+            elif isinstance(inner, CallbackQuery):
+                await inner.answer(BANNED_MESSAGE, show_alert=True)
             return None
 
         return await handler(event, data)
+        
