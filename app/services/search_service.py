@@ -76,33 +76,40 @@ async def search_anime(
         )
         return local_results
 
+    results: list[Anime] = []
+
     try:
         anilist_page = await client.search_anime(raw_query.strip(), page=page, per_page=per_page)
     except AniListError:
         logger.exception(
-            "anilist_search_failed_falling_back_to_cache", extra={"query": normalized_query}
+            "anilist_search_failed_falling_back_to_jikan_then_cache",
+            extra={"query": normalized_query},
         )
-        # Degrade gracefully: serve whatever local results exist rather than
-        # a hard failure, per the project's error-handling requirements.
-        return local_results
+        anilist_page = None
 
-    media_list = anilist_page.get("media") or []
-    results: list[Anime] = []
-    for media in media_list:
-        try:
-            normalized = normalize_anilist_media(media)
-        except ValueError:
-            logger.warning("skipping_media_without_title", extra={"anilist_id": media.get("id")})
-            continue
-        anime = await upsert_anime_from_anilist(session, normalized)
-        results.append(anime)
+    if anilist_page is not None:
+        media_list = anilist_page.get("media") or []
+        for media in media_list:
+            try:
+                normalized = normalize_anilist_media(media)
+            except ValueError:
+                logger.warning("skipping_media_without_title", extra={"anilist_id": media.get("id")})
+                continue
+            anime = await upsert_anime_from_anilist(session, normalized)
+            results.append(anime)
 
-    # AniList found nothing for this query — try Jikan (MyAnimeList mirror)
-    # as a secondary source before giving up. Only on page 1: Jikan is a
-    # fallback for "AniList has no results at all", not a second page
-    # source for an already-successful AniList search.
+    # AniList found nothing for this query (or errored out) — try Jikan
+    # (MyAnimeList mirror) as a secondary source before giving up. Only on
+    # page 1: Jikan is a fallback for "AniList has no results at all", not
+    # a second page source for an already-successful AniList search.
     if not results and jikan_client is not None and page == 1:
         results = await _search_jikan_fallback(session, jikan_client, raw_query.strip(), per_page)
+
+    # AniList errored AND Jikan found nothing either (or wasn't available)
+    # — degrade gracefully to whatever's cached locally rather than a hard
+    # failure, per the project's error-handling requirements.
+    if not results and anilist_page is None:
+        results = local_results
 
     return results
 
@@ -129,3 +136,4 @@ async def _search_jikan_fallback(
         logger.info("anime_search_served_from_jikan_fallback", extra={"query": query, "result_count": len(results)})
 
     return results
+    
