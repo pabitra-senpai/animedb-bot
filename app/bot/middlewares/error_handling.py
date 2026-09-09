@@ -11,7 +11,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject, Update
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,9 @@ class ErrorHandlingMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         except Exception:
-            update_id = data.get("event_update", {}).__dict__.get("update_id")
+            # Registered via dp.update.outer_middleware(), so `event` here
+            # is the raw Update, which already carries update_id directly.
+            update_id = getattr(event, "update_id", None)
             logger.exception(
                 "unhandled_update_exception",
                 extra={"update_id": update_id, "event_type": type(event).__name__},
@@ -40,11 +42,16 @@ class ErrorHandlingMiddleware(BaseMiddleware):
             # Best-effort: tell the user something went wrong without leaking
             # internals. Never let a failure here raise again.
             try:
-                if isinstance(event, Message):
-                    await event.answer(USER_FACING_ERROR)
-                elif isinstance(event, CallbackQuery):
-                    await event.answer("Something went wrong. Please try again.", show_alert=True)
+                inner = event
+                if isinstance(inner, Update):
+                    inner = inner.message or inner.edited_message or inner.callback_query
+
+                if isinstance(inner, Message):
+                    await inner.answer(USER_FACING_ERROR)
+                elif isinstance(inner, CallbackQuery):
+                    await inner.answer("Something went wrong. Please try again.", show_alert=True)
             except Exception:
                 logger.exception("failed_to_send_error_message")
 
             return None
+            
